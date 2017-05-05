@@ -16,15 +16,13 @@
 
 package io.gzinga;
 
+import org.jetbrains.annotations.Nullable;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-/*import java.io.BufferedReader;
-import java.io.FileInputStream;
-import java.io.InputStream;
-import java.io.InputStreamReader;*/
 import java.io.OutputStream;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -33,7 +31,6 @@ import java.util.zip.CRC32;
 import java.util.zip.Deflater;
 import java.util.zip.DeflaterOutputStream;
 import java.util.zip.GZIPInputStream;
-import java.util.zip.GZIPOutputStream;
 
 /**
  * This class implements a stream filter for writing compressed data in
@@ -54,6 +51,7 @@ import java.util.zip.GZIPOutputStream;
  */
 public class GZipOutputStreamRandomAccess extends DeflaterOutputStream {
 	
+	@SuppressWarnings("WeakerAccess")
 	long totalLength = 0;
 	private static byte[] headerWithComment = new byte[] {
         (byte) GZIPInputStream.GZIP_MAGIC,        // Magic number (short)
@@ -71,7 +69,7 @@ public class GZipOutputStreamRandomAccess extends DeflaterOutputStream {
     };
 	
 	/**
-	 * HashMap for maintaing metadata information.
+	 * HashMap for maintaining metadata information.
 	 */
 	Map<Long, Long> offsetMap = new LinkedHashMap<Long, Long>();
 
@@ -79,6 +77,19 @@ public class GZipOutputStreamRandomAccess extends DeflaterOutputStream {
      * CRC-32 of uncompressed data.
      */
     protected CRC32 crc = new CRC32();
+
+    /**
+     * If present then a new "offset" will be generated soon after compressing autoOffsetBytes bytes of data
+     *
+     * The value is approximate because new offsets are only auto-generated after writing a whole chunk of
+     * data passed to GZipOutputStreamRandomAccess.write()
+     */
+	protected @Nullable Long autoOffsetBytes;
+
+    /**
+     * The next key to use for the auto-offset creation
+     */
+	protected long nextAutoOffsetKey;
 
     /*
      * Trailer size in bytes.
@@ -92,16 +103,22 @@ public class GZipOutputStreamRandomAccess extends DeflaterOutputStream {
      *
      * @param out the output stream
      * @param size the output buffer size
+     * @param autoOffsetBytes If non-null, then an "offset" is created automatically every this many bytes as if the
+     *                        {@link #addOffset(Long) addOffset} method were called. If null all offsets must be
+     *                        created manually. The offsets are numbered sequentially starting at 2^32. This allows for
+     *                        separation of auto-generated offsets and most uses of manually generated ones.
      * @exception IOException If an I/O error has occurred.
      * @exception IllegalArgumentException if {@code size <= 0}
      *
      * @since 1.7
      */
-    public GZipOutputStreamRandomAccess(OutputStream out, int size) throws IOException {
+    public GZipOutputStreamRandomAccess(OutputStream out, int size, @Nullable Long autoOffsetBytes) throws IOException {
         super(out, new Deflater(Deflater.DEFAULT_COMPRESSION, true),
               size,
               true);
         writeHeader();
+        this.autoOffsetBytes = autoOffsetBytes;
+        this.nextAutoOffsetKey = 4294967296L;
         crc.reset();
     }
     
@@ -119,7 +136,7 @@ public class GZipOutputStreamRandomAccess extends DeflaterOutputStream {
      * @exception IOException If an I/O error has occurred.
      */
     public GZipOutputStreamRandomAccess(OutputStream out) throws IOException {
-        this(out, 512);   
+        this(out, 512, null);
     }
 
     /**
@@ -154,6 +171,12 @@ public class GZipOutputStreamRandomAccess extends DeflaterOutputStream {
     public synchronized void write(byte[] buf, int off, int len) throws IOException {
         super.write(buf, off, len);
         crc.update(buf, off, len);
+        if(autoOffsetBytes != null){
+            if(def.getBytesRead() >= autoOffsetBytes){
+		addOffset(nextAutoOffsetKey); // This resets the deflater and thus the byte count
+		nextAutoOffsetKey += 1;
+            }
+        }
     }
 
     /**
