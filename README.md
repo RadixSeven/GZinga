@@ -17,7 +17,7 @@ The following steps need to be followed in order to build the jar file :
  * Clone the project on GitHub
  * Do a maven build at the top level of the project using `mvn clean install`
  * If usecase is to generate index based gzip file and perform random search, then jar file will be available under `core/target/gzinga-core*.jar`
- * If it needs to be used with Hadoop MR job to split file, then jar file will be available under `hadoop/target/gzinga-hadoop*.jar`
+ * If it needs to be used with Hadoop MR job to split file, then jar file will be available under `hadoop/target/gzinga-hadoop*.jar`. It depends on the other jar.
 
 ### Running test cases
  * In order to run test cases use `mvn clean test`
@@ -60,5 +60,8 @@ If one needs to read from Hadoop, then he needs to use *SeekableGZipDataInputStr
 *SplittableGZipCodec* class implements *SplittableCodec* provided by Hadoop. If file is generated with multiple headers, then it will be able to split accordingly. If there is single gzip header, then it will run with single split only.
 
 #### Configuration
- In order to use split feature for gzip file, one needs to set *“io.compression.codec”* to *"io.gzinga.hadoop.SplittableGZipCodec,org.apache.hadoop.io.compress.DefaultCodec,org.apache.hadoop.io.compress.BZip2Codec,org.apache.hadoop.io.compress.SnappyCodec"* for JobConf object.
- Also one can set split size by setting property *"mapreduce.input.fileinputformat.split.maxsize”* to required value.
+In order to use split feature for gzip file, one needs to set *“io.compression.codec”* to *"io.gzinga.hadoop.SplittableGZipCodec,org.apache.hadoop.io.compress.DefaultCodec,org.apache.hadoop.io.compress.BZip2Codec,org.apache.hadoop.io.compress.SnappyCodec"* for JobConf object.
+
+One can set input split size as usual by setting the property *"mapreduce.input.fileinputformat.split.maxsize”* to required value.
+
+One may use SplittableGZipCodec for output by setting `mapreduce.output.fileoutputformat.compress` to `true` and `mapreduce.output.fileoutputformat.compress.codec` to `io.gzinga.hadoop.SplittableGZipCodec`.  Then one may set approximate minimum size of the generated splits by putting the number of bytes in a split in `io.gzinga.hadoop.output.bytes-in-split`. The default value if this key is not present is `39452672` (that is, 32 MiB).
