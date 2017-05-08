@@ -16,20 +16,29 @@
 
 package io.gzinga.hadoop;
 
-import java.io.IOException;
-import java.io.InputStream;
-
+import io.gzinga.GZipInputStreamRandomAccess;
+import io.gzinga.GZipOutputStreamRandomAccess;
+import io.gzinga.InputStreamConverter;
 import org.apache.hadoop.fs.FSDataInputStream;
+import org.apache.hadoop.io.compress.CompressionOutputStream;
+import org.apache.hadoop.io.compress.Compressor;
 import org.apache.hadoop.io.compress.Decompressor;
 import org.apache.hadoop.io.compress.GzipCodec;
 import org.apache.hadoop.io.compress.SplitCompressionInputStream;
 import org.apache.hadoop.io.compress.SplittableCompressionCodec;
-import io.gzinga.GZipInputStreamRandomAccess;
-import io.gzinga.InputStreamConverter;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.time.Instant;
 
 public class SplittableGZipCodec extends GzipCodec implements SplittableCompressionCodec {
 
 	private static int buf_length = 32 * 1024;
+
+	public static final String NUM_OUTPUT_BYTES_IN_SPLIT = "io.gzinga.hadoop.output.bytes-in-split";
+	public static final String NUM_OUTPUT_BYTES_IN_SPLIT_DEFAULT = "39452672"; //32MiB = (32*1024*1024L)
 	
 	private long getHeader(SeekableGZipDataInputStream in, long loc)  throws IOException {
 		long position = loc;
@@ -79,6 +88,63 @@ public class SplittableGZipCodec extends GzipCodec implements SplittableCompress
 		return new SplittableGzipInputStream(gzin, newStart, newEnd);
 	}
 
+	@Override
+	public CompressionOutputStream createOutputStream(OutputStream out){
+		long autoOffsetBytes = Long.valueOf(getConf().get(NUM_OUTPUT_BYTES_IN_SPLIT, NUM_OUTPUT_BYTES_IN_SPLIT_DEFAULT));
+		GZipOutputStreamRandomAccess gOut = new GZipOutputStreamRandomAccess(out, 32*1024, autoOffsetBytes);
+		return new SplittableGzipOutputStream(gOut);
+	}
+
+	@Override
+	public CompressionOutputStream createOutputStream(OutputStream out, @Nullable Compressor compressor) {
+		// Ignore compressor parameter ... it should be null - GZipCodec can do this
+		return createOutputStream(out);
+	}
+
+	@Override
+	public @Nullable Compressor createCompressor() {
+		// GZipCodec does this too (when there is no native zlib loaded).
+		return null;
+	}
+
+	@Override
+	public @Nullable Class<? extends Compressor> getCompressorType() {
+		// GZipCodec does this too (when there is no native zlib loaded).
+		return null;
+	}
+
+	private static final class SplittableGzipOutputStream extends CompressionOutputStream{
+
+		public SplittableGzipOutputStream(GZipOutputStreamRandomAccess out) {
+			super(out);
+		}
+
+		@Override
+		public void write(int b) throws IOException {
+			out.write(b);
+		}
+
+		@Override
+		public void write(byte[] b, int off, int len) throws IOException {
+			out.write(b, off, len);
+		}
+
+		@Override
+		public void finish() throws IOException {
+			((GZipOutputStreamRandomAccess)out).finish();
+		}
+
+		@Override
+		public void resetState() throws IOException {
+			// This does more than just reset the deflater because I don't want to take time figuring out what stream
+			// metadata needs to be updated to keep the gzip block valid. So, I add an offset based on current time at
+			// maximum system precision
+			Instant now = Instant.now();
+			long nano_secs_since_epoch = (now.getEpochSecond() % (Long.MAX_VALUE/1000000)) * 1000000000L; // overflows every 292 years
+			((GZipOutputStreamRandomAccess)out).addOffset(now.getNano() + nano_secs_since_epoch);
+		}
+	}
+
 	private static final class SplittableGzipInputStream extends SplitCompressionInputStream {
 
 		private long lastRead = -1;
@@ -92,7 +158,7 @@ public class SplittableGZipCodec extends GzipCodec implements SplittableCompress
 
 		@Override
 		public void resetState() throws IOException {
-			in.reset();
+			in.reset(); // This is a bug. The underlying stream should not be reset, just the decompressor
 		}
 
 		@Override
