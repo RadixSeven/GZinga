@@ -4,10 +4,10 @@
 	<parent>
 		<groupId>io.gzinga</groupId>
 		<artifactId>main</artifactId>
-		<version>1.0.0</version>
+		<version>1.0.1</version>
 	</parent>
 	<artifactId>gzinga-core</artifactId>
-	<version>1.0.0</version>
+	<version>1.0.1</version>
 	<name>GZinga Core</name>
 	<dependencies>
         <dependency>
