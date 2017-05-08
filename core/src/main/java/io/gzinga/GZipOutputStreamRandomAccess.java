@@ -91,37 +91,63 @@ public class GZipOutputStreamRandomAccess extends DeflaterOutputStream {
      */
 	protected long nextAutoOffsetKey;
 
+    /**
+     * True if the header still needs to be written the first time
+     */
+	protected boolean needToWriteFirstHeader;
+
     /*
      * Trailer size in bytes.
      *
      */
     private final static int TRAILER_SIZE = 8;
 
-   /**
-     * Creates a new output stream with the specified buffer size and
-     * flush mode.
+    /**
+     * Creates a new output stream with the specified buffer size
+     *
+     * @param out the output stream
+     * @param size the output buffer size
+     *  @param deflater The deflater to use ... MUST have nowrap set to true.
+     * @param autoOffsetBytes If non-null, then an "offset" is created automatically every this many bytes as if the
+     *                        {@link #addOffset(Long)} method were called. If null all offsets must be
+     *                        created manually. The offsets are numbered sequentially starting at 2^32. This allows for
+     *                        separation of auto-generated offsets and most uses of manually generated ones.
+     * @exception IllegalArgumentException if {@code size <= 0}
+     */
+    public GZipOutputStreamRandomAccess(OutputStream out, int size, @Nullable Long autoOffsetBytes, Deflater deflater){
+        super(out, deflater, size,true);
+        needToWriteFirstHeader = true;
+        this.autoOffsetBytes = autoOffsetBytes;
+        this.nextAutoOffsetKey = 4294967296L;
+    }
+
+    /**
+     * Creates a new output stream with the specified buffer size
      *
      * @param out the output stream
      * @param size the output buffer size
      * @param autoOffsetBytes If non-null, then an "offset" is created automatically every this many bytes as if the
-     *                        {@link #addOffset(Long) addOffset} method were called. If null all offsets must be
+     *                        {@link #addOffset(Long)} method were called. If null all offsets must be
      *                        created manually. The offsets are numbered sequentially starting at 2^32. This allows for
      *                        separation of auto-generated offsets and most uses of manually generated ones.
-     * @exception IOException If an I/O error has occurred.
+     * @exception IllegalArgumentException if {@code size <= 0}
+     */
+    public GZipOutputStreamRandomAccess(OutputStream out, int size, @Nullable Long autoOffsetBytes){
+        this(out, size, autoOffsetBytes, new Deflater(Deflater.DEFAULT_COMPRESSION, true));
+    }
+
+    /**
+     * Creates a new output stream with the specified buffer size
+     *
+     * @param out the output stream
+     * @param size the output buffer size
      * @exception IllegalArgumentException if {@code size <= 0}
      *
-     * @since 1.7
      */
-    public GZipOutputStreamRandomAccess(OutputStream out, int size, @Nullable Long autoOffsetBytes) throws IOException {
-        super(out, new Deflater(Deflater.DEFAULT_COMPRESSION, true),
-              size,
-              true);
-        writeHeader();
-        this.autoOffsetBytes = autoOffsetBytes;
-        this.nextAutoOffsetKey = 4294967296L;
-        crc.reset();
+    public GZipOutputStreamRandomAccess(OutputStream out, int size){
+       this(out, size, null);
     }
-    
+
     public GZipOutputStreamRandomAccess(File gzipFile) throws IOException {
     	this(new FileOutputStream(gzipFile));
     }
@@ -135,8 +161,8 @@ public class GZipOutputStreamRandomAccess extends DeflaterOutputStream {
      * @param out the output stream
      * @exception IOException If an I/O error has occurred.
      */
-    public GZipOutputStreamRandomAccess(OutputStream out) throws IOException {
-        this(out, 512, null);
+    public GZipOutputStreamRandomAccess(OutputStream out) {
+        this(out, 512);
     }
 
     /**
@@ -147,6 +173,9 @@ public class GZipOutputStreamRandomAccess extends DeflaterOutputStream {
      * @throws IOException
      */
     public void addOffset(Long key) throws IOException {
+        if(needToWriteFirstHeader){
+            writeHeader();
+        }
 		resetGzipStream();
 		offsetMap.put(key, totalLength);
     	writeHeader();
@@ -169,12 +198,15 @@ public class GZipOutputStreamRandomAccess extends DeflaterOutputStream {
      * @exception IOException If an I/O error has occurred.
      */
     public synchronized void write(byte[] buf, int off, int len) throws IOException {
+        if(needToWriteFirstHeader){
+            writeHeader();
+        }
         super.write(buf, off, len);
         crc.update(buf, off, len);
         if(autoOffsetBytes != null){
             if(def.getBytesRead() >= autoOffsetBytes){
-		addOffset(nextAutoOffsetKey); // This resets the deflater and thus the byte count
-		nextAutoOffsetKey += 1;
+		        addOffset(nextAutoOffsetKey); // This resets the deflater and thus the byte count
+		        nextAutoOffsetKey += 1;
             }
         }
     }
@@ -184,12 +216,18 @@ public class GZipOutputStreamRandomAccess extends DeflaterOutputStream {
      * @throws IOException
      */
     public void resetGzipStream() throws IOException {
+        if(needToWriteFirstHeader){
+            writeHeader();
+        }
 		finish();
 		def.reset();
     }
     
     @Override
     public void close() throws IOException {
+        if(needToWriteFirstHeader){
+            writeHeader();
+        }
 		resetGzipStream();
     	writeHeader();
     	super.close();
@@ -201,6 +239,7 @@ public class GZipOutputStreamRandomAccess extends DeflaterOutputStream {
      * @throws IOException
      */
     public void writeHeader() throws IOException {
+        needToWriteFirstHeader = false;
     	out.write(headerWithComment);
     	totalLength += headerWithComment.length;
     	StringBuffer sb = new StringBuffer();
@@ -221,6 +260,9 @@ public class GZipOutputStreamRandomAccess extends DeflaterOutputStream {
      * @exception IOException if an I/O error has occurred
      */
     public void finish() throws IOException {
+        if(needToWriteFirstHeader){
+            writeHeader();
+        }
         if (!def.finished()) {
             def.finish();
             while (!def.finished()) {
